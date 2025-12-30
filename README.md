@@ -42,7 +42,50 @@ Use a generic **PCIe x4 OCuLink adapter** card to connect GPUs externally. Since
 | Power Mac G5 (AGP) | ❌ Not supported | No PCIe slots |
 | G4 systems | ❌ Not supported | No PCIe slots |
 
-**Note:** NVIDIA proprietary drivers do NOT support big-endian PowerPC. Use AMD GPUs with the open-source radeon/amdgpu drivers on G5 Macs.
+**Note:** NVIDIA proprietary drivers do NOT support big-endian PowerPC. However, G5 CPUs are **bi-endian** - see [Endianness Conversion](#endianness-conversion) below.
+
+## Endianness Conversion
+
+PowerPC CPUs (PPC970/G5, POWER8/9) are **bi-endian** - they can run in either big-endian or little-endian mode!
+
+### Why This Matters
+
+| Mode | NVIDIA Support | AMD Support |
+|------|----------------|-------------|
+| ppc64le (little-endian) | ✅ Full | ✅ Full |
+| ppc64 (big-endian) | ❌ None | ✅ radeon/nouveau |
+
+### Quick Endianness Check
+
+```bash
+# Check current mode
+./scripts/endian-convert.sh check
+
+# Output:
+# Current endianness: little  ← NVIDIA works!
+# Current endianness: big     ← Need conversion
+```
+
+### Conversion Options
+
+1. **Install ppc64le Linux** (Recommended)
+   - Void Linux, Gentoo, Ubuntu ppc64el
+   - See [docs/ENDIAN_CONVERSION.md](docs/ENDIAN_CONVERSION.md)
+
+2. **Use nouveau on big-endian**
+   - Apply `patches/nouveau-bigendian.patch`
+   - Limited but functional
+
+3. **Use AMD GPUs**
+   - radeon/amdgpu work on both BE and LE
+
+```bash
+# G5 Mac conversion guide
+./scripts/endian-convert.sh g5-guide
+
+# POWER8/9 conversion guide
+./scripts/endian-convert.sh power-guide
+```
 
 ## Hardware Requirements
 
