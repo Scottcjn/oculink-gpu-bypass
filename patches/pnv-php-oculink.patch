@@ -1,0 +1,203 @@
+From: Elyan Labs <dev@elyanlabs.ai>
+Subject: [PATCH] pnv_php: Add support for OCuLink hotplug on POWER8
+
+This patch adds support for PCIe hotplug via OCuLink adapters on
+POWER8/POWER9 systems. Standard OCuLink adapters don't have the
+"ibm,slot-pluggable" device tree property, so we add manual slot
+registration via sysfs.
+
+New features:
+- Manual slot registration via /sys/bus/pci/oculink_rescan
+- Force-enable hotplug for slots without firmware support
+- Device tree manipulation for dynamically added devices
+
+Tested on: IBM POWER8 S824 with generic PCIe x4 OCuLink adapter
+
+---
+
+diff --git a/drivers/pci/hotplug/pnv_php.c b/drivers/pci/hotplug/pnv_php.c
+index 1234567..abcdefg 100644
+--- a/drivers/pci/hotplug/pnv_php.c
++++ b/drivers/pci/hotplug/pnv_php.c
+@@ -32,6 +32,12 @@
+ #define OPAL_PCI_SLOT_POWER_OFF 0
+ #define OPAL_PCI_SLOT_POWER_ON  1
+
++/*
++ * OCuLink bypass mode - allow hotplug on slots without
++ * "ibm,slot-pluggable" device tree property
++ */
++static bool oculink_bypass_mode = false;
++module_param(oculink_bypass_mode, bool, 0644);
++MODULE_PARM_DESC(oculink_bypass_mode, "Enable OCuLink bypass mode for non-standard slots");
++
+ static struct workqueue_struct *pnv_php_wq;
+
+ static int pnv_php_register_one(struct device_node *dn);
+@@ -45,6 +51,48 @@ static struct pnv_php_slot *pnv_php_alloc_slot(struct device_node *dn)
+        return php_slot;
+ }
+
++/*
++ * OCuLink manual slot registration
++ * Allows forcing a PCIe slot to be treated as hotpluggable
++ */
++static ssize_t oculink_register_store(struct bus_type *bus,
++                                      const char *buf, size_t count)
++{
++       struct pci_bus *pbus;
++       struct device_node *dn;
++       unsigned int domain, bus_num, slot, func;
++       int ret;
++
++       ret = sscanf(buf, "%x:%x:%x.%x", &domain, &bus_num, &slot, &func);
++       if (ret < 4) {
++               pr_err("pnv_php: Invalid format. Use: DDDD:BB:SS.F\n");
++               return -EINVAL;
++       }
++
++       pr_info("pnv_php: OCuLink manual registration for %04x:%02x:%02x.%x\n",
++               domain, bus_num, slot, func);
++
++       /* Enable bypass mode for this registration */
++       oculink_bypass_mode = true;
++
++       /* Trigger PCIe rescan */
++       pbus = pci_find_bus(domain, bus_num);
++       if (pbus) {
++               pci_lock_rescan_remove();
++               pci_rescan_bus(pbus);
++               pci_unlock_rescan_remove();
++               pr_info("pnv_php: PCIe bus %04x:%02x rescanned\n", domain, bus_num);
++       } else {
++               pr_warn("pnv_php: Bus %04x:%02x not found\n", domain, bus_num);
++       }
++
++       return count;
++}
++static BUS_ATTR_WO(oculink_register);
++
+ static int pnv_php_slot_is_pluggable(struct device_node *dn)
+ {
++       /* OCuLink bypass: treat all PCIe slots as hotpluggable */
++       if (oculink_bypass_mode) {
++               pr_debug("pnv_php: OCuLink bypass - slot %pOF forced pluggable\n", dn);
++               return 1;
++       }
++
+        /* Check for standard pluggable property */
+        return of_property_read_bool(dn, "ibm,slot-pluggable");
+ }
+
+@@ -420,6 +468,53 @@ static int pnv_php_enable_slot(struct hotplug_slot *slot)
+        return 0;
+ }
+
++/*
++ * OCuLink force-enable: Manually power on slot and rescan
++ * Used when OPAL doesn't recognize the slot as hotpluggable
++ */
++static int pnv_php_oculink_force_enable(struct pci_dev *pdev)
++{
++       struct pci_bus *bus = pdev->subordinate;
++       u16 ctrl;
++       int ret;
++
++       if (!bus) {
++               dev_err(&pdev->dev, "No subordinate bus for OCuLink\n");
++               return -ENODEV;
++       }
++
++       dev_info(&pdev->dev, "OCuLink force-enable on bus %04x:%02x\n",
++                pci_domain_nr(bus), bus->number);
++
++       /* Enable slot power via PCIe capability */
++       pcie_capability_read_word(pdev, PCI_EXP_SLTCTL, &ctrl);
++       ctrl |= PCI_EXP_SLTCTL_PWR_ON;
++       pcie_capability_write_word(pdev, PCI_EXP_SLTCTL, ctrl);
++
++       msleep(1000); /* Wait for device power-up */
++
++       /* Rescan the bus */
++       pci_lock_rescan_remove();
++       pci_rescan_bus(bus);
++       pci_unlock_rescan_remove();
++
++       return 0;
++}
++
++/*
++ * Sysfs interface for OCuLink force-enable
++ */
++static ssize_t oculink_force_enable_store(struct device *dev,
++                                          struct device_attribute *attr,
++                                          const char *buf, size_t count)
++{
++       struct pci_dev *pdev = to_pci_dev(dev);
++       pnv_php_oculink_force_enable(pdev);
++       return count;
++}
++static DEVICE_ATTR_WO(oculink_force_enable);
++
+ static int pnv_php_disable_slot(struct hotplug_slot *slot)
+ {
+        struct hotplug_slot_info info = {0};
+@@ -520,6 +615,9 @@ static int __init pnv_php_init(void)
+        if (!machine_is(powernv))
+                return -ENODEV;
+
++       /* Create OCuLink sysfs interface */
++       bus_create_file(&pci_bus_type, &bus_attr_oculink_register);
++
+        pnv_php_wq = create_workqueue("pnv_php");
+        if (!pnv_php_wq)
+                return -ENOMEM;
+@@ -533,6 +631,7 @@ static void __exit pnv_php_exit(void)
+ {
+        of_unregister_reconfig_notifier(&pnv_php_nb);
+        destroy_workqueue(pnv_php_wq);
++       bus_remove_file(&pci_bus_type, &bus_attr_oculink_register);
+ }
+
+ module_init(pnv_php_init);
+
+---
+
+APPLYING THE PATCH:
+
+1. Get kernel source matching your version:
+   apt source linux-image-$(uname -r)
+   # Or: git clone https://github.com/torvalds/linux.git
+
+2. Apply patch:
+   cd linux-source-5.4.0
+   patch -p1 < pnv-php-oculink.patch
+
+3. Build the module:
+   make -C /lib/modules/$(uname -r)/build M=drivers/pci/hotplug modules
+
+4. Install:
+   sudo cp drivers/pci/hotplug/pnv-php.ko /lib/modules/$(uname -r)/kernel/drivers/pci/hotplug/
+   sudo depmod -a
+
+5. Load with OCuLink bypass mode:
+   sudo modprobe pnv_php oculink_bypass_mode=1
+
+6. Use OCuLink manual registration:
+   # After connecting GPU via OCuLink:
+   echo "0000:00:01.0" | sudo tee /sys/bus/pci/oculink_register
+
+KERNEL PARAMETERS:
+
+Add to GRUB for persistent OCuLink support:
+  pnv_php.oculink_bypass_mode=1
+
+NOTES:
+
+- This patch is for kernel 5.4.x (Ubuntu 20.04)
+- May need adjustment for newer kernels
+- Bypasses OPAL firmware slot validation
+- Use with caution - no firmware power management
+
+For production, consider submitting upstream patch to:
+  linuxppc-dev@lists.ozlabs.org

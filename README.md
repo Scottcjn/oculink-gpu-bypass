@@ -1,12 +1,34 @@
-# OCuLink GPU Bypass for POWER & PowerPC Systems
+# GPU Bypass for POWER & PowerPC Systems
 
-Enable external GPUs on IBM POWER8/POWER9 and PowerPC Mac systems using OCuLink (SFF-8612) adapters to bypass OpenFirmware/OPAL PCIe enumeration issues.
+Enable GPUs on IBM POWER8/POWER9 and PowerPC Mac systems by bypassing OpenFirmware/OPAL PCIe enumeration issues.
+
+**Two approaches:**
+1. **Internal PCIe** - Rescan internal slots after boot (no extra hardware!)
+2. **OCuLink External** - Add more GPUs via SFF-8612 adapters
 
 ## The Problem
 
 IBM POWER and PowerPC Mac systems have restrictive firmware (OPAL/OpenFirmware) that often fails to properly enumerate modern GPUs during boot. This prevents using GPUs even when the hardware is fully capable.
 
-## The Solution
+## Solution 1: Internal PCIe Rescan (No Extra Hardware!)
+
+If your GPU is already in an internal PCIe slot but not detected at boot:
+
+```bash
+# Quick test - may work without kernel patch!
+sudo ./scripts/pnv-php-rescan.sh
+
+# If that doesn't work, apply the kernel patch first
+# See: patches/pnv-php-oculink.patch
+```
+
+**How it works:**
+1. Boot system (OPAL ignores GPU, no device tree entry)
+2. Load patched `pnv_php` driver with bypass mode
+3. Trigger PCIe bus rescan
+4. GPU appears in Linux!
+
+## Solution 2: OCuLink External
 
 Use a generic **PCIe x4 OCuLink adapter** card to connect GPUs externally. Since OCuLink is electrically just PCIe, we can:
 1. Boot the system with only the adapter installed
