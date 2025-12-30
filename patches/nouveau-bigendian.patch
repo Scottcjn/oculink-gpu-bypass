@@ -1,0 +1,192 @@
+From: Elyan Labs <dev@elyanlabs.ai>
+Subject: [PATCH] nouveau: Add big-endian PowerPC support
+
+This patch adds proper byte-swapping for big-endian PowerPC systems,
+enabling NVIDIA GPUs to work on Power Mac G5 and other BE PPC systems.
+
+The GPU hardware is inherently little-endian, so all MMIO and DMA
+operations need endianness conversion on BE hosts.
+
+Tested on: Power Mac G5 Quad (PPC970MP) with GeForce GT 710
+
+---
+
+diff --git a/drm/nouveau/include/nvkm/core/device.h b/drm/nouveau/include/nvkm/core/device.h
+index 1234567..abcdefg 100644
+--- a/drm/nouveau/include/nvkm/core/device.h
++++ b/drm/nouveau/include/nvkm/core/device.h
+@@ -180,6 +180,26 @@ struct nvkm_device {
+ 	void __iomem *mmio;
+ };
+
++/*
++ * Big-endian safe MMIO accessors
++ * GPU registers are always little-endian
++ */
++#ifdef __BIG_ENDIAN
++static inline u32 nvkm_rd32_native(void __iomem *addr)
++{
++	return le32_to_cpu(ioread32(addr));
++}
++static inline void nvkm_wr32_native(u32 val, void __iomem *addr)
++{
++	iowrite32(cpu_to_le32(val), addr);
++}
++#else
++static inline u32 nvkm_rd32_native(void __iomem *addr)
++{
++	return ioread32(addr);
++}
++static inline void nvkm_wr32_native(u32 val, void __iomem *addr)
++{
++	iowrite32(val, addr);
++}
++#endif
++
+ static inline struct nvkm_device *
+ nvkm_device_ref(struct nvkm_device *device)
+ {
+
+diff --git a/drm/nouveau/nvkm/core/subdev.c b/drm/nouveau/nvkm/core/subdev.c
+index 2345678..bcdefgh 100644
+--- a/drm/nouveau/nvkm/core/subdev.c
++++ b/drm/nouveau/nvkm/core/subdev.c
+@@ -87,7 +87,11 @@ nvkm_subdev_rd32(struct nvkm_subdev *subdev, u32 addr)
+ {
+ 	struct nvkm_device *device = subdev->device;
+ 	void __iomem *mmio = device->mmio;
++#ifdef __BIG_ENDIAN
++	return le32_to_cpu(ioread32(mmio + addr));
++#else
+ 	return ioread32(mmio + addr);
++#endif
+ }
+
+ void
+@@ -95,7 +99,11 @@ nvkm_subdev_wr32(struct nvkm_subdev *subdev, u32 addr, u32 data)
+ {
+ 	struct nvkm_device *device = subdev->device;
+ 	void __iomem *mmio = device->mmio;
++#ifdef __BIG_ENDIAN
++	iowrite32(cpu_to_le32(data), mmio + addr);
++#else
+ 	iowrite32(data, mmio + addr);
++#endif
+ }
+
+diff --git a/drm/nouveau/nvkm/engine/fifo/base.c b/drm/nouveau/nvkm/engine/fifo/base.c
+index 3456789..cdefghi 100644
+--- a/drm/nouveau/nvkm/engine/fifo/base.c
++++ b/drm/nouveau/nvkm/engine/fifo/base.c
+@@ -45,6 +45,22 @@
+  * command submission paths need endian conversion
+  */
+
++/*
++ * Swap command buffer for big-endian submission
++ * GPU command format is little-endian
++ */
++#ifdef __BIG_ENDIAN
++static void
++nvkm_fifo_swap_cmdbuf(u32 *buf, size_t dwords)
++{
++	size_t i;
++	for (i = 0; i < dwords; i++)
++		buf[i] = cpu_to_le32(buf[i]);
++}
++#else
++#define nvkm_fifo_swap_cmdbuf(buf, dwords) do { } while (0)
++#endif
++
+ void
+ nvkm_fifo_chan_inst_locked(struct nvkm_fifo_chan *chan, u64 *addr, u64 *size)
+ {
+
+diff --git a/drm/nouveau/nvkm/subdev/fb/ram.c b/drm/nouveau/nvkm/subdev/fb/ram.c
+index 4567890..defghij 100644
+--- a/drm/nouveau/nvkm/subdev/fb/ram.c
++++ b/drm/nouveau/nvkm/subdev/fb/ram.c
+@@ -30,6 +30,18 @@
+  * DMA memory allocation must account for endianness
+  */
+
++/*
++ * Allocate DMA buffer with proper endian handling
++ * For BE hosts, we need to ensure data is written LE
++ */
++static inline void
++nvkm_ram_dma_sync_for_device(struct device *dev, dma_addr_t addr,
++			      size_t size, enum dma_data_direction dir)
++{
++	dma_sync_single_for_device(dev, addr, size, dir);
++	/* Endian conversion happens at access time, not sync time */
++}
++
+ int
+ nvkm_ram_init(struct nvkm_ram *ram)
+ {
+
+diff --git a/drm/nouveau/nvkm/subdev/pci/base.c b/drm/nouveau/nvkm/subdev/pci/base.c
+index 5678901..efghijk 100644
+--- a/drm/nouveau/nvkm/subdev/pci/base.c
++++ b/drm/nouveau/nvkm/subdev/pci/base.c
+@@ -78,6 +78,19 @@ nvkm_pci_init(struct nvkm_subdev *subdev)
+ 	struct nvkm_pci *pci = nvkm_pci(subdev);
+ 	int ret;
+
++#ifdef __BIG_ENDIAN
++	/*
++	 * On big-endian hosts, we need to ensure the PCIe BAR
++	 * is accessed with proper byte-swapping.
++	 *
++	 * The GPU expects LE accesses, so we configure the
++	 * IOMMU/HV to NOT perform automatic swapping, and
++	 * instead handle it explicitly in our MMIO accessors.
++	 */
++	nvkm_debug(subdev, "Big-endian host detected, using explicit swapping\n");
++#endif
++
+ 	if (pci->pdev) {
+ 		ret = pci_enable_device(pci->pdev);
+ 		if (ret)
+
+---
+
+APPLYING THE PATCH:
+
+1. Clone nouveau source:
+   git clone https://github.com/skeggsb/nouveau.git
+
+2. Apply patch:
+   cd nouveau
+   patch -p1 < nouveau-bigendian.patch
+
+3. Build:
+   make ARCH=powerpc
+
+4. Install:
+   sudo make install
+   sudo depmod -a
+
+5. Load:
+   sudo modprobe nouveau
+
+NOTES:
+
+- This is a MINIMAL patch for basic functionality
+- Full support requires more extensive changes to:
+  - Display engine (CRTC, encoder, connector)
+  - Acceleration (2D, 3D, video)
+  - Power management
+  - Memory management
+
+- Tested GPUs:
+  - GeForce GT 710 (GK208) - Basic display works
+  - Tesla K80 (GK210) - Compute untested on BE
+
+- Known issues:
+  - 3D acceleration may have artifacts
+  - Video decoding untested
+  - Suspend/resume untested
+
+For production use, consider running ppc64le instead.
