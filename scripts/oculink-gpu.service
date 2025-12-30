@@ -1,0 +1,16 @@
+[Unit]
+Description=OCuLink GPU Bypass - PCIe Rescan Service
+Documentation=https://github.com/elyanlabs/oculink-gpu-bypass
+After=multi-user.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/bin/sleep 5
+ExecStart=/opt/oculink-gpu-bypass/oculink-gpu-rescan.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
