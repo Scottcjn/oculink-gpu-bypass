@@ -180,9 +180,13 @@ NOTES:
   - Power management
   - Memory management
 
-- Tested GPUs:
-  - GeForce GT 710 (GK208) - Basic display works
-  - Tesla K80 (GK210) - Compute untested on BE
+- Target test systems:
+  - Power Mac G5 Dual 2.0GHz (PPC970FX) - UNTESTED
+  - IBM POWER8 S824 (ppc64le) - Primary target
+
+- Potentially compatible GPUs:
+  - GeForce GT 710 (GK208) - Low power, good for testing
+  - Tesla K80 (GK210) - Compute target
 
 - Known issues:
   - 3D acceleration may have artifacts

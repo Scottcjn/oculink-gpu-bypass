@@ -254,10 +254,12 @@ Benchmark comparison (V100 via OCuLink x4 vs native x16):
 
 | System | GPU | Driver | Status |
 |--------|-----|--------|--------|
-| IBM POWER8 S824 | Tesla M40 | 440.64 | ✅ Working |
-| IBM POWER8 S824 | Tesla K80 | 440.64 | ✅ Working |
-| IBM POWER8 S822LC | Tesla V100 | 440.64 | ✅ Working |
-| Power Mac G5 Quad | Radeon HD 7950 | radeon | 🔄 Testing |
+| IBM POWER8 S824 | Tesla M40 | 440.64 | 🔄 Pending (OCuLink) |
+| IBM POWER8 S824 | Tesla K80 | 440.64 | 🔄 Pending (OCuLink) |
+| IBM POWER8 S824 | Tesla V100 | 440.64 | 🔄 Pending (OCuLink) |
+| Power Mac G5 Dual 2.0 | AMD Radeon | radeon | 🔄 Pending |
+
+**Note:** This project is in active development. Hardware testing pending OCuLink adapter installation.
 
 ## License
 
