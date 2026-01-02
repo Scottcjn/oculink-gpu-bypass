@@ -1,3 +1,5 @@
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0) [![GPU](https://img.shields.io/badge/GPU-Bypass-red)](https://github.com/Scottcjn/oculink-gpu-bypass) [![PCIe](https://img.shields.io/badge/PCIe-OCuLink-blue)](https://github.com/Scottcjn/oculink-gpu-bypass)
+
 # GPU Bypass for POWER & PowerPC Systems
 
 Enable GPUs on IBM POWER8/POWER9 and PowerPC Mac systems by bypassing OpenFirmware/OPAL PCIe enumeration issues.
